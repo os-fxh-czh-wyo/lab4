@@ -175,7 +175,7 @@ void proc_run(struct proc_struct *proc)
 {
     if (proc != current)
     {
-        // LAB4:EXERCISE3 YOUR CODE
+        // LAB4:EXERCISE3 2312939
         /*
          * Some Useful MACROs, Functions and DEFINEs, you can use them in below implementation.
          * MACROs or Functions:
@@ -184,7 +184,19 @@ void proc_run(struct proc_struct *proc)
          *   lsatp():                   Modify the value of satp register
          *   switch_to():              Context switching between two processes
          */
-
+        bool intr_flag;
+        local_intr_save(intr_flag); // 关中断
+        if (proc == current) {
+            local_intr_restore(intr_flag);
+            return;
+        } // 防止在关中断前current再次切换
+        struct proc_struct *old=current;
+        current=proc; // 切换进程
+        proc->runs++; // 更新进程相关状态
+        current->need_resched = 0; // 不需要调度
+        lsatp(proc->pgdir); // 切换页表
+        switch_to(&old->context,&proc->context); // 上下文切换
+        local_intr_restore(intr_flag); // 开中断
     }
 }
 
