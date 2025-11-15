@@ -130,24 +130,28 @@ get_proc_name(struct proc_struct *proc)
 static int
 get_pid(void)
 {
-    static_assert(MAX_PID > MAX_PROCESS);
-    struct proc_struct *proc;
-    list_entry_t *list = &proc_list, *le;
-    static int next_safe = MAX_PID, last_pid = MAX_PID;
+    static_assert(MAX_PID > MAX_PROCESS); // 确保PID 空间 > 进程数上限
+    struct proc_struct *proc; // 临时指针，用于遍历进程
+    list_entry_t *list = &proc_list, *le; // 进程链表头，链表遍历指针
+    static int next_safe = MAX_PID, last_pid = MAX_PID; // next_safe: 下一个安全PID， last_pid: 上一个分配的PID
+    // 分配 PID 逻辑：从 last_pid + 1 开始查找，若冲突则继续 +1，直到找到一个未被占用的 PID
+    // 快速路径：尝试递增  
     if (++last_pid >= MAX_PID)
     {
-        last_pid = 1;
-        goto inside;
+        last_pid = 1; // 回绕到 1
+        goto inside;  // 跳转到检查逻辑
     }
+    //  需要更新 next_safe
     if (last_pid >= next_safe)
     {
     inside:
         next_safe = MAX_PID;
     repeat:
         le = list;
-        while ((le = list_next(le)) != list)
+        while ((le = list_next(le)) != list) // 遍历所有进程
         {
             proc = le2proc(le, list_link);
+            // 存在冲突，自增
             if (proc->pid == last_pid)
             {
                 if (++last_pid >= next_safe)
@@ -160,6 +164,7 @@ get_pid(void)
                     goto repeat;
                 }
             }
+            // 重新设置 next_safe：大于且离 last_pid 最近的一个proc_pid
             else if (proc->pid > last_pid && next_safe > proc->pid)
             {
                 next_safe = proc->pid;
@@ -334,7 +339,51 @@ int do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf)
     //    5. insert proc_struct into hash_list && proc_list
     //    6. call wakeup_proc to make the new child process RUNNABLE
     //    7. set ret vaule using child proc's pid
+
+    // 1.创建进程结构体 
+    if ((proc = alloc_proc()) == NULL)
+    {
+        goto fork_out;
+    }
+    // 设置父进程
+    proc->parent = current;
     
+    // 2.创建内核栈
+    if (setup_kstack(proc) != 0)
+    {
+        goto bad_fork_cleanup_proc;
+    }
+
+    // 3.共享内存管理结构体
+    if (copy_mm(clone_flags, proc) != 0)
+    {
+        goto bad_fork_cleanup_kstack;
+    }
+
+    // 4.设置trapframe和context
+    copy_thread(proc, stack, tf);
+    // 以下操作需要关中断保护,因为涉及全局数据结构的修改
+    bool intr_flag;
+    local_intr_save(intr_flag);
+    {
+        //    5. 设置进程状态为可运行
+        // 分配唯一的PID
+        proc->pid = get_pid();
+        // 加入进程hash表
+        hash_proc(proc);
+        // 加入进程链表
+        list_add(&proc_list, &(proc->list_link));
+        // 进程数加1
+        nr_process++;
+    }
+    local_intr_restore(intr_flag);
+
+    //   6. 设置进程状态为可运行
+    wakeup_proc(proc);
+
+    // 7. 设置返回值为子进程的PID
+    ret = proc->pid;
+
 fork_out:
     return ret;
 
