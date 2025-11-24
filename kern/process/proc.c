@@ -113,7 +113,7 @@ alloc_proc(void)
         proc->mm = NULL;
         memset(&(proc->context), 0, sizeof(struct context));
         proc->tf = NULL;
-        proc->pgdir = 0;
+        proc->pgdir = boot_pgdir_pa;
         proc->flags = 0;
         memset(proc->name, 0, PROC_NAME_LEN + 1);
     }
